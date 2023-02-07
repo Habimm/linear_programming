@@ -8,6 +8,8 @@
 # the example computes an Irreducible Inconsistent Subsystem (IIS),
 # and writes it to a file
 
+# ipython3 lp.py examples/1.lp
+
 import sys
 import gurobipy as gp
 from gurobipy import GRB
