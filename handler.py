@@ -14,6 +14,8 @@
 from gurobipy import GRB
 from info import info
 import gurobipy
+import io
+import sys
 import sys
 import tempfile
 
@@ -38,14 +40,19 @@ gurobipy_status_explanations = {
   17: "MEM_LIMIT: Optimization terminated because the total amount of allocated memory exceeded the value specified in the SoftMemLimit parameter.",
 }
 
-
 def handle(request, repo_path):
+
+  # my_stdout is of type <class '_io.StringIO'>
+  # https://stackoverflow.com/questions/1218933/can-i-redirect-the-stdout-into-some-sort-of-string-buffer
+  sys.stdout = my_stdout = io.StringIO()
 
   # Read and solve model
   with tempfile.NamedTemporaryFile(suffix='.lp') as tmp:
 
     # request.data is the <class 'bytes'> body of the HTTP request.
-    tmp.write(request.data)
+    # info(request.data)
+    # Without adding an additional newline byte, the gurobipy.read method below fails if request.data does not end with a newline byte.
+    tmp.write(request.data + b'\n')
 
     # Or else the content under `tmp.name` will have zero length.
     tmp.flush()
@@ -53,9 +60,10 @@ def handle(request, repo_path):
     # tmp.name is the path to a file under /tmp/
     try:
       model = gurobipy.read(tmp.name)
-    except gurobipy.GurobiError as e:
-      error_info = f'args: {e.args}\nerrno: {e.errno}\nmessage: {e.message}\nwith_traceback(): {e.with_traceback()}\n'
-      return error_info
+    except gurobipy.GurobiError as gurobi_error:
+      sys.stdout = sys.__stdout__
+      what_has_been_printed = my_stdout.getvalue()
+      return f'GurobiError: {gurobi_error.message}\n\n{what_has_been_printed}'
 
   model.optimize()
   if model.Status == GRB.INF_OR_UNBD:
@@ -68,7 +76,10 @@ def handle(request, repo_path):
     with tempfile.NamedTemporaryFile(suffix='.sol') as tmp:
       model.write(tmp.name)
       solution = tmp.read()
-    return solution
+    sys.stdout = sys.__stdout__
+    what_has_been_printed = my_stdout.getvalue()
+    solution = solution.decode()
+    return f'{solution}\n{what_has_been_printed}'
 
   if model.Status == GRB.INFEASIBLE:
     # Model is infeasible - compute an Irreducible Inconsistent Subsystem (IIS)
@@ -76,6 +87,11 @@ def handle(request, repo_path):
     with tempfile.NamedTemporaryFile(suffix='.ilp') as tmp:
       model.write(tmp.name)
       irreducible_inconsistent_subsystem = tmp.read()
-    return f'Problem is infeasible. Here\'s an Irreducible Inconsistent Subsystem:\n\n{irreducible_inconsistent_subsystem.decode()}'
+    sys.stdout = sys.__stdout__
+    what_has_been_printed = my_stdout.getvalue()
+    irreducible_inconsistent_subsystem = irreducible_inconsistent_subsystem.decode()
+    return f'Problem is infeasible. Here\'s an Irreducible Inconsistent Subsystem:\n\n{irreducible_inconsistent_subsystem}\n{what_has_been_printed}'
 
-  return f'Optimization was stopped.\n\n{gurobipy_status_explanations[model.Status]}'
+  sys.stdout = sys.__stdout__
+  what_has_been_printed = my_stdout.getvalue()
+  return f'Optimization was stopped.\n\n{gurobipy_status_explanations[model.Status]}\n\n{what_has_been_printed}'
